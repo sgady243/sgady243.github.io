@@ -1,0 +1,190 @@
+---
+title: "CEE218X_A2_StephanieGady"
+author: "Stephanie Gady"
+date: "9/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+Note: If you hit control + Enter with a certain part of code hilighted, you can run just that part of the code without having to run the whole thing (helps search for and isolate errors). Use chapters 1-2.4 for code needed. 
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(leaflet)
+```
+
+```{r}
+wa_counties <- counties("WA", cb = T, progress_bar = F)
+```
+
+Create map of Washington counties
+```{r}
+mapview(wa_counties)
+```
+
+Add in the place markers for each county
+```{r}
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = wa_counties
+  ) %>%
+  addMarkers(
+    data = wa_counties %>% 
+      st_centroid()
+  )
+
+```
+
+Add in eastern washington counties to create one grographic area (using larger areas than smaller ones)
+```{r}
+ewa_county_names <- 
+  c(
+    "Spokane",
+    "Pend Orielle",
+    "Lincoln",
+    "Ferry",
+    "Stevens",
+    "Adams",
+    "Whitman",
+    "Franklin",
+    "Walla Walla",
+    "Garfield",
+    "Columbia",
+    "Asotin"
+  )
+
+ewa_counties <-
+  counties("WA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% ewa_county_names)
+```
+
+Create basic eastern WA plot with cities in all of washington, then pull city names for specific counties (in eastern WA counties variable) back to create a new variable, ewa_cities.
+```{r}
+ggplot(wa_counties) + geom_sf()
+
+wa_cities <- places("WA", cb = T, progress_bar = FALSE)
+
+ewa_cities <- wa_cities[ewa_counties, ]
+```
+Use the wa_cities and ewa_counties vars to create a map showing counties and cities in selected region. Note - it seems it would be more helpful to show the names of each county rather than 1-8? Especially since I already manually added in the names in lines 49-60, but since this matches the example shown in the textbook I will leave it for now.
+```{r}
+
+mapview(ewa_counties, alpha.regions = 0) + mapview(ewa_cities)
+ewa_cities_within <-
+  wa_cities %>% 
+  st_centroid() %>% 
+  .[ewa_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(wa_cities %>% select(GEOID)) %>% 
+  st_as_sf()
+
+mapview(ewa_counties, alpha.regions = 0) + mapview(ewa_cities_within, label = "NAME")
+```
+
+Use the 'filter' function to seperate cities within selected regoin (eastern washington, or 'ewa') vs cities outside the selected area (non-'ewa' cities). Note: I used purple and orange because I like these colors better than red and green. 
+```{r}
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = wa_counties,
+    fill = F,
+    weight = 2,
+    label = ~NAME
+  ) %>%
+  addPolygons(
+    data = wa_cities %>% 
+      filter(!GEOID %in% ewa_cities_within$GEOID),
+    color = "orange",
+    label = ~NAME
+  ) %>% 
+  addPolygons(
+    data = ewa_cities_within,
+    color = "purple",
+    label = ~NAME
+  )
+```
+
+Pull block group data for selected region ('ewa').
+```{r}
+ewa_cbgs <- block_groups("WA", ewa_county_names[1:12], cb = T, progress_bar = F)
+
+ewa_cbgs <- 
+  ewa_county_names %>% 
+  map_dfr(function(county) {
+    block_groups("WA", county, cb = T, progress_bar = F)
+  })
+```
+
+Use https://api.census.gov/data.html to access 2020 census info. I'm using red instead of green because I think the green markings are hard to see against the green parts on the map. 
+```{r}
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = ewa_cities_within,
+    color = "red",
+    label = ~NAME
+  )
+```
+
+Use the one-chunk shortcut to mutate census population data.
+```{r}
+
+library(tigris)
+library(sf)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+smc_pop_2020 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:081",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    block =
+      paste0(state,county,tract,block),
+    pop = P1_001N
+  )
+
+```
+
+Isolate the blocks for Spokane, WA in 2020.
+``` {r}
+
+library(devtools)
+library(tigris)
+
+smc_blocks_2020 <- blocks("WA", "Spokane", year = 2020, progress_bar = F)
+
+nfo_boundary <- places("WA", progress_bar = F) %>% 
+  filter(NAME == "Spokane")
+
+nfo_pop_2020 <- smc_pop_2020 %>% 
+  left_join(smc_blocks_2020 %>% select(block = GEOID20)) %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  .[nfo_boundary, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(smc_blocks_2020 %>% select(block = GEOID20)) %>% 
+  st_as_sf()
+
+```
+
+Place these isolated blocks into a map. 
+```{r}
+
+mapview(nfo_pop_2020, zcol = "pop")
+
+```
