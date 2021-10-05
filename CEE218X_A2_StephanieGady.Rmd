@@ -182,8 +182,8 @@ nfo_pop_2020 <- smc_pop_2020 %>%
 
 ```
 
-Place these isolated blocks into a map. 
-```{r}
+Place these isolated blocks into a map. Note: This code doesn't map anything because the 'nfo_pop_2020' variable is empty for Washington state. 
+``{r}
 
 mapview(nfo_pop_2020, zcol = "pop")
 
