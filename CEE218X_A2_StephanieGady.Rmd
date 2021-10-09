@@ -1,7 +1,7 @@
 ---
 title: "CEE218X_A2_StephanieGady"
 author: "Stephanie Gady"
-date: "9/30/2021"
+date: "10/9/2021"
 output: html_document
 ---
 
@@ -11,180 +11,151 @@ knitr::opts_chunk$set(echo = F, warning = F, message = F)
 Note: If you hit control + Enter with a certain part of code hilighted, you can run just that part of the code without having to run the whole thing (helps search for and isolate errors). Use chapters 1-2.4 for code needed. 
 
 ```{r}
+library(tigris)
 library(tidyverse)
 library(sf)
-library(tigris)
-library(censusapi)
 library(mapview)
 library(leaflet)
-```
-
-```{r}
-wa_counties <- counties("WA", cb = T, progress_bar = F)
-```
-
-Create map of Washington counties
-```{r}
-mapview(wa_counties)
-```
-
-Add in the place markers for each county
-```{r}
-
-leaflet() %>% 
-  addTiles() %>% 
-  addPolygons(
-    data = wa_counties
-  ) %>%
-  addMarkers(
-    data = wa_counties %>% 
-      st_centroid()
-  )
-
-```
-
-Add in eastern washington counties to create one grographic area (using larger areas than smaller ones)
-```{r}
-ewa_county_names <- 
-  c(
-    "Spokane",
-    "Pend Orielle",
-    "Lincoln",
-    "Ferry",
-    "Stevens",
-    "Adams",
-    "Whitman",
-    "Franklin",
-    "Walla Walla",
-    "Garfield",
-    "Columbia",
-    "Asotin"
-  )
-
-ewa_counties <-
-  counties("WA", cb = T, progress_bar = F) %>%
-  filter(NAME %in% ewa_county_names)
-```
-
-Create basic eastern WA plot with cities in all of washington, then pull city names for specific counties (in eastern WA counties variable) back to create a new variable, ewa_cities.
-```{r}
-ggplot(wa_counties) + geom_sf()
-
-wa_cities <- places("WA", cb = T, progress_bar = FALSE)
-
-ewa_cities <- wa_cities[ewa_counties, ]
-```
-Use the wa_cities and ewa_counties vars to create a map showing counties and cities in selected region. Note - it seems it would be more helpful to show the names of each county rather than 1-8? Especially since I already manually added in the names in lines 49-60, but since this matches the example shown in the textbook I will leave it for now.
-```{r}
-
-mapview(ewa_counties, alpha.regions = 0) + mapview(ewa_cities)
-ewa_cities_within <-
-  wa_cities %>% 
-  st_centroid() %>% 
-  .[ewa_counties, ] %>% 
-  st_set_geometry(NULL) %>% 
-  left_join(wa_cities %>% select(GEOID)) %>% 
-  st_as_sf()
-
-mapview(ewa_counties, alpha.regions = 0) + mapview(ewa_cities_within, label = "NAME")
-```
-
-Use the 'filter' function to seperate cities within selected regoin (eastern washington, or 'ewa') vs cities outside the selected area (non-'ewa' cities). Note: I used purple and orange because I like these colors better than red and green. 
-```{r}
-leaflet() %>% 
-  addTiles() %>% 
-  addPolygons(
-    data = wa_counties,
-    fill = F,
-    weight = 2,
-    label = ~NAME
-  ) %>%
-  addPolygons(
-    data = wa_cities %>% 
-      filter(!GEOID %in% ewa_cities_within$GEOID),
-    color = "orange",
-    label = ~NAME
-  ) %>% 
-  addPolygons(
-    data = ewa_cities_within,
-    color = "purple",
-    label = ~NAME
-  )
-```
-
-Pull block group data for selected region ('ewa').
-```{r}
-ewa_cbgs <- block_groups("WA", ewa_county_names[1:12], cb = T, progress_bar = F)
-
-ewa_cbgs <- 
-  ewa_county_names %>% 
-  map_dfr(function(county) {
-    block_groups("WA", county, cb = T, progress_bar = F)
-  })
-```
-
-Use https://api.census.gov/data.html to access 2020 census info. I'm using red instead of green because I think the green markings are hard to see against the green parts on the map. 
-```{r}
-
-leaflet() %>% 
-  addTiles() %>% 
-  addPolygons(
-    data = ewa_cities_within,
-    color = "red",
-    label = ~NAME
-  )
-```
-
-Use the one-chunk shortcut to mutate census population data.
-```{r}
-
-library(tigris)
-library(sf)
 library(censusapi)
-
 Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+Call and sort 2020 data.
+```{r}
+dec_vars_2020 <-
+  listCensusMetadata( name = "2020/dec/pl",
+    type = "variables")
 
 smc_pop_2020 <-
-  getCensus(
-    name = "dec/pl",
+  getCensus(name = "dec/pl",
     vintage = 2020,
     region = "block:*", 
-    regionin = "state:06+county:081",
-    vars = "P1_001N"
-  ) %>% 
+    regionin = "state:06+county:085",
+    vars = "P1_001N") %>% 
   transmute(
-    block =
-      paste0(state,county,tract,block),
-    pop = P1_001N
+    GEOID20 = paste0(state,county,tract,block),
+    pop_2020 = P1_001N
   )
 
+blocks_2020 <- blocks("CA", "Cupertino", year = 2020, progress_bar = F)
 ```
 
-Isolate the blocks for Spokane, WA in 2020.
-``` {r}
+Call and sort 2010 data.
+```{r}
+dec_vars_2010 <-
+  listCensusMetadata(name = "2010/dec/pl",
+    type = "variables")
 
-library(devtools)
-library(tigris)
+smc_pop_2010 <-
+  getCensus( name = "dec/pl",
+    vintage = 2010,
+    region = "block:*", 
+    regionin = "state:06+county:085",
+    vars = "P001001") %>% 
+  transmute(
+    GEOID10 =
+      paste0(state,county,tract,block),
+    pop_2010 = P001001
+  )
 
-smc_blocks_2020 <- blocks("WA", "Spokane", year = 2020, progress_bar = F)
+blocks_2010 <- blocks("CA", "Cupertino", year = 2010, progress_bar = F)
+```
 
-nfo_boundary <- places("WA", progress_bar = F) %>% 
-  filter(NAME == "Spokane")
+Construct aligned geometry.
+```{r}
+place_boundary <- places("CA", progress_bar = F) %>% 
+  filter(NAME == "Cupertino")
 
-nfo_pop_2020 <- smc_pop_2020 %>% 
-  left_join(smc_blocks_2020 %>% select(block = GEOID20)) %>% 
-  st_as_sf() %>% 
+place_blocks_2010 <- blocks_2010 %>% 
   st_centroid() %>% 
-  .[nfo_boundary, ] %>% 
-  st_set_geometry(NULL) %>% 
-  left_join(smc_blocks_2020 %>% select(block = GEOID20)) %>% 
-  st_as_sf()
+  .[place_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(blocks_2010 %>% select(GEOID10)) %>% 
+  st_as_sf() %>% 
+  select(GEOID20) %>% 
+  left_join(smc_pop_2020)
+
+mapview(place_boundary) + mapview(place_blocks_2010, alpha.regions = 0, color = "red", lwd = 2)
+  
+  # place_blocks_2010 <- scc_pop_2010 %>% 
+  # left_join(blocks_2010 %>% select(GEOID10)) %>% 
+  # st_as_sf() %>% 
+  # st_centroid() %>% 
+  # .[place_boundary, ] %>% 
+  # st_set_geometry(NULL) %>% 
+  # left_join(blocks_2010 %>% select(GEOID10)) %>%
+  # st_as_sf()
 
 ```
 
-Place these isolated blocks into a map. Note: This code doesn't map anything because the 'nfo_pop_2020' variable is empty for Washington state. 
-``{r}
+Next, to perform spatial subsetting, we'll need all 2020 blocks that intersect with 2010 blocks.
+```{r}
+place_blocks_2020 <- blocks_2020 %>%
+  .[place_blocks_2010, ] %>% 
+  select(GEOID20) %>% 
+  left_join(smc_pop_2020)
+```
 
-mapview(nfo_pop_2020, zcol = "pop")
+Now, I follow the spatial subsetting method shown in Chapter 2.4.
+```{r}
+place_blocks_2020_intersect <- place_blocks_2020 %>% 
+  st_transform(26910) %>% 
+  mutate(original_area = st_area()) %>% 
+  st_intersection(
+    place_blocks_2010 %>%
+      select(GEOID10) %>% 
+      st_transform(26910)
+  ) %>% 
+  mutate(
+    leftover_area = st_area(),
+    perc_area = as.numeric(leftover_area / original_area),
+    pop_2020 = pop_new * perc_area
+  )
+```
+At this point, the dataframe has both GEOID20 and GEOID10 IDs. The GEOID10 IDs tell us which GEOID20 pieces can be pieced together to form the full GEOID10 shape. So we can group and summarize to get the 2020 population counts within the GEOID10 boundaries. We don't need to retain geometries at this step, since we can join this back to the 2010 data.
+```{r}
+place_blocks_2020_reshaped <- place_blocks_2020_intersect %>%
+  st_drop_geometry() %>% 
+  group_by(GEOID20) %>% 
+  summarize(
+    pop_2020 = sum(pop_new, na.rm=T) %>% round()
+  )
+```
 
+Lastly, I join this to `place_blocks_2010` and compute the absolute difference. To compute density in people per acre, I transform to a planar coordinate system with units in ft and do the appropriate math. Note that `st_area()` produces results in a "unit" class, which can be converted to regular numbers using `as.numeric()`.
+```{r}
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+place_pop_2010_2020 <- place_blocks_2010 %>% 
+  left_join(place_blocks_2020_reshaped) %>% 
+  mutate(
+    absolute_pop = (pop_2020 - pop_2010) / as.numeric(st_area()) * 43560
+  )
+```
+
+The SF Chronicle example has a color palette that goes from red negative values to green negative values, with white in the center. To get our color pallete to be symmetrical across 0, we need the minimum and maximum bounds to be equidistant from 0. For our absolute change, let's try stretching one bound to meet the other. Using https://www.nceas.ucsb.edu/sites/default/files/2020-04/colorPaletteCheatsheet.pdf, we can identify "PiYG" as a satisfactory palette for our purposes.
+```{r}
+max <- max(abs(place_pop_2010_2020$absolute_pop))
+absolute_pal <- colorNumeric(
+  palette = "RdYlGn",
+  domain = c(-max_variable,max_variable)
+)
+```
+
+Lastly, map.
+```{r}
+leaflet(place_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "green",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal,
+    value = c(-500,500),
+    title = "Cupertino Population Change from 2010-2020"
+  )
 ```
