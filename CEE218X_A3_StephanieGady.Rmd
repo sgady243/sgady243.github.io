@@ -1,0 +1,160 @@
+---
+title: "CEE218X_A3_StephanieGady"
+author: "Stephanie Gady"
+date: "10/11/2021"
+output: html_document
+---
+
+During group discussions last week, my pod spent some time talking about the vulnerabilities Stanford allows students to face during extreme heat events, especially students with health conditions or low/middle income students who can't purchase fans and other cooling supplies. This leaves lesser privileged students especially at risk, while the university simply sends out emails saying to wear light clothing and close windows when it is hot out. As a FLI student myself, I chose to look at the locations and concentrations of low-income households in the bay area for this assignment. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+My census key hasn't been working (it asks me to reset it and create a new one each time) so I've just been using the one from the reading.
+```{r}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(devtools)
+library(leaflet)
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+Pair 'tempfile()' with 'unlink(temp)' so unwanted contents are removed.
+```{r}
+temp <- tempfile()
+download.file("https://www2.census.gov/programs-surveys/acs/data/pums/2019/1-Year/csv_hca.zip",destfile = temp)
+
+pums_hca_2019_1yr <- read_csv(unzip(temp,"psam_h06.csv"))
+
+unlink(temp)
+
+```
+
+Load PUMS data using getCensus().
+```{r}
+
+pums_2019_1yr <- getCensus(
+  name = "acs/acs1/pums",
+  vintage = 2019,
+  region = "public use microdata area:*", 
+  regionin = "state:06",
+  vars = c(
+    "SERIALNO",
+    "SPORDER",
+    "PWGTP",
+    "WGTP",
+    "NP",
+    "HHL",
+    "HINCP",
+    "TEN"
+  )
+)
+  
+```
+
+Filter for bay area counties within CA. 
+```{r}
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  pums_2019_1yr %>% 
+  mutate(
+    PUMA = str_pad(public_use_microdata_area,5,"left","0")
+  ) %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+```
+
+Create a measure of the number of households/PUMA that make less than $100,000/year (unfortunately this is considered low-income in this area). I chose to create a household-level map instead of an individual one, since HINCP calls household (not individual) income. 
+```{r}
+
+bay_pums_lowincome <-
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    WGTP = as.numeric(WGTP),
+    lowincome_households = ifelse(
+      (HINCP < 100000),
+      WGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    perc_lowincome_households =
+      (sum(lowincome_households, na.rm =T)/sum(WGTP, na.rm = T)*100
+  )) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  ) %>% 
+  st_as_sf()
+
+```
+
+Create a map showing low-income households. 
+```{r}
+
+pums_pal <- colorNumeric(
+  palette = "Purples",
+  domain = bay_pums_lowincome$perc_lowincome_households
+)
+
+leaflet() %>%
+  addTiles() %>% 
+  addPolygons(
+    data = bay_pums_lowincome,
+    fillColor = ~pums_pal(perc_lowincome_households),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(perc_lowincome_households), 
+      "% Households making less than $100K"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = bay_pums_lowincome,
+    pal = pums_pal,
+    values = ~perc_lowincome_households,
+    title = "% Households making less than $100K"
+  )
+
+```
