@@ -1,0 +1,271 @@
+---
+title: "CEE218X_A4_StephanieGady"
+author: "Stephanie Gady"
+date: "10/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+knitr::opts_chunk$set(warning = F, message = F)
+library(tidyverse)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+```
+
+```{r}
+
+census_race_categories <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+
+bay_education_race <-
+  1:7 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2019,
+      region = "county:085",
+      regionin = "state:06",
+      vars = paste0("group(C15002",LETTERS[x],")")
+    ) %>%
+      select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+      pivot_longer(
+        ends_with("E"),
+        names_to = "name",
+        values_to = "estimate"
+      ) %>%
+      left_join(
+        acs_vars_2019_5yr %>% 
+          select(name, label)
+      ) %>% 
+      select(-name) %>% 
+      separate(
+        label,
+        into = c(NA, NA, NA, "education"),
+        sep = "!!"
+      ) %>% 
+      filter(!is.na(education)) %>% 
+      mutate(race = census_race_categories[x])
+  })
+
+```
+
+Stacked bar chart:
+```{r}
+
+bay_race_total <-
+  bay_education_race %>% 
+  group_by(race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(education = "Total")
+
+bay_education_race %>% 
+  group_by(education, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(bay_race_total) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = education %>% factor(levels = rev(c("Total","Less than high school diploma", "High school graduate (includes equivalency)", "Some college or associate's degree", "Bachelor's degree or higher"))),
+      y = estimate,
+      fill = race %>% factor(levels = rev(unique(bay_education_race$race)))
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Household education",
+    y = "Proportion of households",
+    title = "Santa Clara household education by race",
+    fill = "Race of householder"
+  ) 
+
+```
+
+
+Filled bar chart: 
+```{r}
+
+bay_race_total <-
+  bay_education_race %>% 
+  group_by(race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(education = "Total")
+
+bay_education_race %>% 
+  group_by(education, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(bay_race_total) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = education %>% factor(levels = rev(c("Total","Less than high school diploma", "High school graduate (includes equivalency)", "Some college or associate's degree", "Bachelor's degree or higher"))),
+      y = estimate,
+      fill = race %>% factor(levels = rev(unique(bay_education_race$race)))
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Household education",
+    y = "Proportion of households",
+    title = "Santa Clara household education by race",
+    fill = "Race of householder"
+  ) +
+  coord_flip() +
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )  +
+  guides(
+    fill = guide_legend()
+  )
+
+```
+
+The above two charts show the educational attainment by race in Santa Clara county (CA) for individuals 25 and older. In this particular county, there are a disproportionate number of individuals who self-identify as 'Asian alone' with Bachelor's degrees, compared to the number of individuals of other races with bachelor's degrees. Since this data is only for those 25 and up, these stats may change as current students graduate. 
+
+```{r}
+
+acs_vars_2019 <-
+  listCensusMetadata(
+    name = "2019/acs/acs1",
+    type = "variables"
+  )
+
+census_ethnicity_categories <- 
+  c(
+    "Latinx",
+    "White, not Latinx",
+    "Not White, not Latinx"
+  )
+
+```
+
+```{r}
+    
+bay_education_ethnicity <-
+  1:9 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs1",
+      vintage = 2019,
+      region = "county:085",
+      regionin = "state:06",
+      vars = paste0("group(C15002",LETTERS[x],")")
+    ) %>%
+      select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+      pivot_longer(
+        ends_with("E"),
+        names_to = "name",
+        values_to = "estimate"
+      ) %>%
+      left_join(
+        acs_vars_2019_5yr %>% 
+          select(name, label)
+      ) %>% 
+      select(-name) %>% 
+      separate(
+        label,
+        into = c(NA, NA, NA, "education"),
+        sep = "!!"
+      ) %>% 
+      filter(!is.na(education)) %>% 
+      mutate(ethnicity = census_ethnicity_categories[x]) %>%
+      filter(!is.na(ethnicity))
+  })
+
+```
+
+Stacked bar chart:
+```{r}
+
+bay_ethnicity_total <-
+  bay_education_ethnicity %>% 
+  group_by(ethnicity) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(education = "Total")
+
+bay_education_ethnicity %>% 
+  group_by(education, ethnicity) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(bay_ethnicity_total) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = education %>% factor(levels = rev(c("Total","Less than high school diploma", "High school graduate (includes equivalency)", "Some college or associate's degree", "Bachelor's degree or higher"))),
+      y = estimate,
+      fill = ethnicity %>% factor(levels = rev(unique(bay_education_ethnicity$ethnicity)))
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Household education",
+    y = "Proportion of households",
+    title = "Santa Clara household education by ethnicity",
+    fill = "Ethnicity of householder"
+  ) 
+
+```
+
+
+Filled bar chart: 
+```{r}
+
+bay_ethnicity_total <-
+  bay_education_ethnicity %>% 
+  group_by(ethnicity) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(education = "Total")
+
+bay_education_ethnicity %>% 
+  group_by(education, ethnicity) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(bay_ethnicity_total) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = education %>% factor(levels = rev(c("Total","Less than high school diploma", "High school graduate (includes equivalency)", "Some college or associate's degree", "Bachelor's degree or higher"))),
+      y = estimate,
+      fill = ethnicity %>% factor(levels = rev(unique(bay_education_ethnicity$ethnicity)))
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Household education",
+    y = "Proportion of households",
+    title = "Santa Clara household education by ethnicity",
+    fill = "Ethnicity of householder"
+  )  +
+  coord_flip() +
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )  +
+  guides(
+    fill = guide_legend()
+  )
+
+```
+
+The above two charts show the educational attainment by ethnicity in Santa Clara county (CA) for individuals 25 and older. I'm not sure if this dataset is incorrect since it shows the majority of households are headed by a self-identified Latinx individual. Assuming this data is correct, higher levels of educational attainment are disproportionately representedd by Latinx households. 
