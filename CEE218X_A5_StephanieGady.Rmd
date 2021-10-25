@@ -1,0 +1,169 @@
+---
+title: "CEE218X_A5_StephanieGady"
+author: "Stephanie Gady"
+date: "10/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+#load libraries
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(devtools)
+library(readxl)
+library(leaflet)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+```
+
+```{r}
+ces4 <- read_excel("A5data.xlsx")
+
+#filter desired census tracts
+stripped <-
+  ces4 %>%
+  select(!ends_with("Pctl"))
+ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+#join tracts
+ces4_map <- stripped %>%
+  filter(`California County` %in% bay_county_names) %>%
+  left_join(
+    ca_tracts %>%
+      transmute(GEOID = GEOID %>% as.numeric()),
+    by = c("Census Tract" = "GEOID")
+  ) %>%
+  st_as_sf()
+
+```
+
+The following maps all use data from the 2020 CalEnviroScreen survey. For this assignment, we focus on asthma and PM2.5 concentration. The maps below show PM2.5 concentration and asthma rates throughout the desired region (SF bay area). 
+
+```{r}
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+
+ces4_bay_pm25 <-
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, PM2.5) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+pm25_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_pm25$PM2.5
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_pm25,
+    fillColor = ~pm25_pal(PM2.5),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~PM2.5
+  )
+
+ces4_bay_asthma <-
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Asthma) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+asthma_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_asthma$Asthma
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_asthma,
+    fillColor = ~asthma_pal(Asthma),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~Asthma
+  )
+```
+
+Below: scatter plot comparing asthma vs. PM2.5 concentration. I think it makes sense that the line of best fit is positively correlated between the two, I think that this is a rather loose correlation since the data is rather varied - this is likely due to the fact that asthma is not created by PM2.5 concentration or lack thereof alone, and is also influenced by genetic factors and other environmental influences. 
+
+```{r}
+bay_asthma_pm_tract <-
+  ces4_map %>%
+  filter(
+    !is.na(Asthma), 
+    !is.na(PM2.5)
+  )
+ggplot(
+  data = bay_asthma_pm_tract,
+    aes(
+      x = PM2.5,
+      y = Asthma
+    )) +
+  geom_point() +
+  labs(
+    title = "Asthma x PM 2.5 Scatter Plot"
+  ) +
+  geom_smooth(method = "lm")
+```
+An increase of prevelance in PM2.5 is associated with an increase of prevelence in asthma”; “20% of the variation in asthma is explained by the variation in PM2.5.
+```{r}
+#plot data again
+ggplot(
+  data = bay_asthma_pm_tract,
+    aes(
+      x = PM2.5,
+      y = log(Asthma)
+    )) +
+  geom_point() +
+  labs(
+    title = "Asthma x PM 2.5 Scatter Plot LOG"
+  ) +
+  geom_smooth(method = "lm")
+
+#use lm() to perform regression analysis
+model_log <- lm(log(Asthma) ~ PM2.5, bay_asthma_pm_tract)
+summary(model_log)
+```
