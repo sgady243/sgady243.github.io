@@ -176,7 +176,7 @@ summary_2x2 <-
   )) %>% 
 group_by(leadrisk) %>% 
 summarize(
-  `yes` = sum(yes), 
+  `yes` = sum(yes),  
   `no` = sum(no)
 )
 
