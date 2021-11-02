@@ -1,0 +1,189 @@
+---
+title: "CEE218X_A6_StephanieGady"
+author: "Stephanie Gady"
+date: "10/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+#load libraries
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(leaflet)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+```
+
+```{r}
+
+pums_2019_1yr <- getCensus(
+  name = "acs/acs1/pums",
+  vintage = 2019,
+  region = "public use microdata area:*", 
+  regionin = "state:06",
+  vars = c(
+    "SERIALNO",
+    "SPORDER",
+    "PWGTP",
+    "WGTP",
+    "NP",
+    "HINCP",
+    "RWAT",
+    "YBL",
+    "BLD",
+    "TEN",
+    "MV",
+    "AGEP"
+  )
+)
+
+#saveRDS(pums_2019_1yr, "a6_pums.rds")
+#pums_2019_1yr <- readRDS("a6_pums.rds")
+
+```
+
+Create map of SF:
+```{r}
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F) 
+
+sf_boundary <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME == "San Francisco")
+
+sf_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[sf_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+sf_pums <-
+  pums_2019_1yr %>% 
+  mutate(
+    PUMA = str_pad(public_use_microdata_area,5,"left","0")
+  ) %>% 
+  filter(PUMA %in% sf_pumas$PUMACE10)
+
+leaflet() %>%
+  addTiles() %>% 
+  addPolygons(
+    data = sf_pumas,
+    color = "gray",
+    opacity = 0.7,
+    fillOpacity = 0.3,
+    weight = 1.5
+    )
+
+```
+
+```{r}
+
+sf_pums_clean <- sf_pums %>%
+  mutate(
+    YBL = as.numeric(YBL),
+    AGEP = as.numeric(AGEP),
+    HINCP = as.numeric(HINCP)
+  ) %>% 
+  filter(YBL %in% 1:3) %>% 
+  arrange(AGEP) %>% 
+  group_by(SERIALNO) %>% 
+  summarize_all(first)
+
+sf_pums_sorted <-
+  sf_pums_clean %>%
+  mutate(
+    building = BLD %>% 
+      factor(
+        levels = sf_pums$BLD %>% 
+          unique() %>%
+          as.numeric() %>% 
+          sort()
+      ),
+    tenure = TEN %>%
+      factor(
+        levels = sf_pums$TEN %>% 
+          unique() %>%
+          as.numeric() %>% 
+          sort()
+      ),
+    movein = MV %>%
+      factor(
+        levels = sf_pums$MV %>% 
+          unique() %>%
+          as.numeric() %>% 
+          sort()
+      ),
+    puma = PUMA %>%
+      factor(
+        levels = sf_pums$PUMA %>% 
+          unique() %>%
+          sort()
+      )
+  )
+
+```
+
+```{r}
+
+logit_model <- glm(
+  leadrisk ~ BLD + TEN + MV + PUMA,
+  family = quasibinomial(),
+  data = sf_pums_sorted
+)
+
+exp(coef(logit_model))
+exp(coef(logit_model))/(exp(coef(logit_model))+1)
+summary(logit_model)
+
+sample_predict <- sample_n(sf_pums_sorted, 1)
+predict(logit_model, sample_predict, type = "response")
+
+```
+
+```{r}
+
+sf_pums_predicted <- sf_pums_sorted %>% 
+  mutate(predict = predict(logit_model, sf_pums_sorted, type = "response"))
+
+summary_2x2 <-
+  sf_pums_predicted %>% 
+  mutate(
+    leadrisk = ifelse(
+      leadrisk == 1, 
+      "yes", 
+      "no"
+    ),
+    yes = ifelse(
+      predict >= 0.1, 
+      as.numeric(WGTP),
+      0
+    ),
+      no = ifelse(
+      predict <= 0.1, 
+      as.numeric(WGTP),
+      0
+      
+  )) %>% 
+group_by(leadrisk) %>% 
+summarize(
+  `yes` = sum(yes), 
+  `no` = sum(no)
+)
+
+summary_2x2
+
+```
+
+Describe the households which exceeded your threshold score in simple heuristics (i.e., what values did they generally have for BLD, TEN, and MV, in plain English). Comment on the success rate expected if the organization were to mail postcards to households of this type: Roughly how many would they mail out based on their threshold score? What percentage of postcards do you expect to actually go to low-income households with children? What percentage of all at-risk children are likely to be reached?
+
+The households which exceeded my threshold score in simple heuristics are generally households with values of BLD > 3, TEN > 3, and MV > 2. If the organization were to mail postcards to households of this type, about 20%  would actually  fo to low-income households with children. Some ways to ensure that the highest possible percentage of all at-risk children are reached might be to distribute the postcards in public centers, such as schools, libraries, and grocery stores, and potentially offer an incentive to those who fill it out on the spot (i.e. $5 gift certificate or something similar) so that the highest possible number of children may be reached, increasing the likelihood that low-income children are reached. 
