@@ -1,0 +1,249 @@
+---
+title: "CEE218X_A8_StephanieGady"
+author: "Stephanie Gady"
+date: "11/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tigris)
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(censusapi)
+library(leaflet)
+library(StatMatch)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+```
+
+```{r}
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = bay_pumas,
+    weight = 1,
+    color = "gray",
+    label = ~PUMACE10
+  ) %>% 
+  addMarkers(
+    lng = -121.736450,
+    lat = 37.964880
+  ) %>% 
+  addPolygons(
+    data = bay_pumas %>% 
+      filter(PUMACE10 == "01309")
+  )
+
+```
+
+```{r}
+
+pums_2014_2019 <- readRDS("pums_2014_2019_wts.rds")
+pums_bart <- pums_2014_2019 %>%
+  mutate(
+    PWGTP = as.numeric(PWGTP),
+    bart = ifelse(
+      JWTR %in% c("4"),
+      PWGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA, year) %>% 
+  summarize(
+    pop = sum(PWGTP),
+    bart = sum(bart)
+  )
+
+pums_pal <- colorNumeric(
+  palette = "YlOrRd",
+  domain = pums_bart %>% 
+    filter(year == 2018) %>% 
+    pull(pop)
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = pums_bart %>% 
+      filter(year == 2018) %>% 
+      right_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+      st_as_sf(),
+    fillColor = ~pums_pal(pop),
+    color = "white",
+    weight = 1,
+    fillOpacity = 0.5,
+    label = ~paste0(PUMA,": Population ", pop)
+  )
+
+```
+
+```{r}
+
+pums_pal <- colorNumeric(
+  palette = "GnBu",
+  domain = pums_bart %>% 
+    filter(year == 2018) %>% 
+    pull(bart)
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = pums_bart %>% 
+      filter(year == 2018) %>% 
+      right_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+      st_as_sf(),
+    fillColor = ~pums_pal(bart),
+    color = "white",
+    weight = 1,
+    fillOpacity = 0.5,
+    label = ~paste0(PUMA,": ", bart, " BART commute riders")
+  )
+
+pums_bart_clean <-
+  pums_bart %>% 
+  select(-pop) %>% 
+  pivot_wider(
+    names_from = year,
+    values_from = bart
+  )
+
+```
+
+```{r}
+
+obs_matrix <-
+  pums_bart_clean %>% 
+  ungroup() %>% 
+  select(`2014`,`2015`,`2016`,`2017`) %>% 
+  as.matrix()
+dist_matrix <- mahalanobis.dist(obs_matrix)
+rownames(dist_matrix) <- pums_bart_clean$PUMA
+colnames(dist_matrix) <- pums_bart_clean$PUMA
+match <- dist_matrix["01309",] %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  rename(
+    PUMA = rowname,
+    match = "."
+  ) %>% 
+  right_join(
+    pums_bart_clean
+  ) %>% 
+  arrange(match) %>% 
+  .[1:11, ] %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+```
+
+```{r}
+
+match_pumas <-
+  match %>% 
+  filter(!PUMA %in% c("01309")) %>% 
+  st_drop_geometry() %>% 
+  select(-match) %>% 
+  pivot_longer(
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  ) %>%
+  group_by(
+    year
+  ) %>% 
+  summarize(
+    bart = mean(bart),
+    PUMA = "Similar PUMAs"
+  )
+treatment_pumas <-
+  match %>% 
+  filter(PUMA %in% c("01309")) %>% 
+  select(-match) %>% 
+  st_drop_geometry() %>% 
+  pivot_longer(
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  )
+rbind(
+  treatment_pumas,
+  match_pumas
+) %>% 
+  ggplot(
+    aes(
+      x = as.numeric(year),
+      y = bart,
+      color = PUMA
+    )
+  ) +
+  geom_line() +
+  geom_vline(xintercept = 2018, linetype = "dashed") +
+  labs(
+    title = "Antioch vs. control neighborhoods, BART ridership",
+    x = "Year",
+    y = "BART commute riders"
+  )
+
+```
+
+```{r}
+
+transit_did <-
+  match %>% 
+  st_drop_geometry() %>% 
+  select(-match) %>% 
+  pivot_longer(
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  ) %>% 
+  mutate(
+    year = year %>% as.numeric(),
+    time = ifelse(year >= 2019, 1, 0),
+    treated = ifelse(PUMA == "01309", 1, 0)
+  )
+
+did_reg <- lm(bart ~ treated*time, data = transit_did)
+
+summary(did_reg)
+
+```
+
+For 6.5 points: 
+
+From these results, we can see that ridership has increased due to the opening of the new BART station in 2018. As a rider myself, I can attest to the fact that the new BART station has increased ridership due to the ability to connect to the southern Caltrain stops more easily, eliminating the need to use a  city  bus (which is less reliable) to make this connection. We can see this ridership increase via increased time values (a slight increase from the 2017 data). 
