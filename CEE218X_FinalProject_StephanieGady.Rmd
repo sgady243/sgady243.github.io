@@ -1,0 +1,471 @@
+---
+title: "CEE218X_FinalProject_StephanieGady"
+author: "Stephanie Gady"
+date: "11/22/2021"
+output: html_document
+---
+
+For my final project, I have chosen to build upon some analysis we started in past assignments in CEE218X. The bay area has some of the biggest inequality disparities in the country, and I think it is important to recognize that not everyone who lives here makes a six-figure tech salary. As development of this region continues and it becomes more and more homogeneous, we must be increasingly mindful of how middle and lower-income individuals and households can easily be left out of key policy decisions. I think that pollution burden, traffic, asthma rates, cardiovascular disease, and  drinking water quality are just a few indicators of overall well-being, something that can vary greatly depending on what resources are available to a household or individual. It’s easy to assume in the bay area that everyone has access to all the resources they need, but in fact the bay is one of the most unequal regions in the country in many ways. In order to demonstrate this in my research, I examine where these indicators exist throughout the bay area and to what degree, and focus on which regions might be especially vulnerable by identifying indicators that are likely to occur concurrently and which regions experience multiple indicators. 
+	My topic was inspired by pod discussions during week 3, in which my pod spent some time talking about the vulnerabilities Stanford allows students to face during extreme heat events, especially students with health conditions or low/middle income students who can’t purchase fans and other cooling supplies. This leaves less socioeconomically privileged students especially at risk, while the university simply sends out emails saying to wear light clothing and close windows when it is hot out or drink warm beverages when it is cold. As a FLI student myself, I often feel the effects of policies which are intentionally best-suited towards high income individuals. I think this project could be impactful, both on campus and in the bay area ass a whole, because I may be able to identify regions which are especially vulnerable to policies that are increasingly best-suited towards class-privileged households. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(devtools)
+library(readxl)
+library(leaflet)
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+```{r}
+temp <- tempfile()
+download.file("https://www2.census.gov/programs-surveys/acs/data/pums/2019/1-Year/csv_hca.zip",destfile = temp)
+
+pums_hca_2019_1yr <- read_csv(unzip(temp,"psam_h06.csv"))
+
+unlink(temp)
+
+```
+
+```{r}
+
+pums_2019_1yr <- getCensus(
+  name = "acs/acs1/pums",
+  vintage = 2019,
+  region = "public use microdata area:*", 
+  regionin = "state:06",
+  vars = c(
+    "SERIALNO",
+    "SPORDER",
+    "PWGTP",
+    "WGTP",
+    "NP",
+    "HHL",
+    "HINCP",
+    "TEN"
+  )
+)
+  
+```
+
+Before examining regional indicators, I first created a simple map of bay area counties by income to get a general idea of where vulnerable regions might be located. I chose to create a household-level map instead of an individual one, since HINCP calls household (not individual) income. 
+```{r}
+
+ca_pumas <- 
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  pums_2019_1yr %>% 
+  mutate(
+    PUMA = str_pad(public_use_microdata_area,5,"left","0")
+  ) %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+```
+
+```{r}
+
+bay_pums_lowincome <-
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    WGTP = as.numeric(WGTP),
+    lowincome_households = ifelse(
+      (HINCP < 100000),
+      WGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    perc_lowincome_households =
+      (sum(lowincome_households, na.rm =T)/sum(WGTP, na.rm = T)*100
+  )) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  ) %>% 
+  st_as_sf()
+
+```
+
+```{r}
+
+pums_pal <- colorNumeric(
+  palette = "Purples",
+  domain = bay_pums_lowincome$perc_lowincome_households
+)
+
+leaflet() %>%
+  addTiles() %>% 
+  addPolygons(
+    data = bay_pums_lowincome,
+    fillColor = ~pums_pal(perc_lowincome_households),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(perc_lowincome_households), 
+      "% Households making less than $100K"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = bay_pums_lowincome,
+    pal = pums_pal,
+    values = ~perc_lowincome_households,
+    title = "% Households making less than $100K"
+  )
+
+```
+
+Next, I create maps showing rates of asthma, cardiovascular disease, drinking water quality, traffic, and pollution burden. I chose factors that are outside the 'sphere of influence' of most individuals  because I think this shows which areas experience vulnerabilities that cannot be seen as the fault of one  individual or household (for  instance, low education rates or unemployment in one region  might be overlooked in policy making because these qualities could theoretically be solved by individuals choosing to pursue higher education or  seek work). 
+
+```{r}
+ces4 <- read_excel("FinalProjectEnviroData.xlsx")
+
+stripped <-
+  ces4 %>%
+  select(!ends_with("Pctl"))
+
+```
+
+```{r}
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+
+ces4_map <- stripped %>%
+  filter(`California County` %in% bay_county_names) %>%
+  left_join(
+    ca_tracts %>%
+      transmute(GEOID = GEOID %>% as.numeric()),
+    by = c("Census Tract" = "GEOID")
+  ) %>%
+  st_as_sf()
+
+```
+Cardiovascular disease:
+```{r}
+
+ces4_bay_cardio <-
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Cardiovascular) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+cardio_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_cardio$Cardiovascular
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_cardio,
+    fillColor = ~cardio_pal(Cardiovascular),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = "Cardiovascular Diseaase"
+  )
+
+```
+
+Asthma rates: 
+```{r}
+
+ces4_bay_asthma <-
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Asthma) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+asthma_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_asthma$Asthma
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_asthma,
+    fillColor = ~asthma_pal(Asthma),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = "Asthma Rates"
+  )
+```
+
+Drinking water quality: 
+```{r}
+ces4_bay_water <- 
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Water) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+water_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_asthma$Water
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_water,
+    fillColor = ~water_pal(Water),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = "Drinking Water Quality"
+  )
+```
+
+Traffic:
+```{r}
+ces4_bay_traffic <- 
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Traffic) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+traffic_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_traffic$Traffic
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygond(
+    data = ces4_bay_traffic,
+    fillColor = ~traffic_pal(Traffic),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = "Traffic"
+  )
+```
+
+Pollution burden: 
+```{r}
+ces4_bay_pollution <- 
+  stripped %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, Pollution) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+pollution_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_pollution$Pollution
+)
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_pollution,
+    fillColor = ~pollution_pal(Pollution),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = "Pollution  Burden"
+  )
+
+```
+
+Then, I create scatter plots showing correlation between some indicators which may be likely to  coexist, such as asthma and  cardiovascular disease prevalence, pollution  burden and  drinking water  quality, and traffic and pollution burden. Though correlation does not  equal causation, these plots are important  because they demonstrate to policymakers that oftentimes regions which experience one  vulnerability experience other vulnerabilities which may be related. Likewise, areas which do not experience one vulnerability may be  less likely to  experience others, meaning that negative impacts of policies are likely to be concentrated in small, specific regions. As shown in  the plots below, there is  some correlation between asthma and cardiovascular disease prevalence and traffic  and   pollution burden, while not much exists between pollution burden and water quality. 
+
+```{r}
+
+bay_asthma_cardio_tract <-
+  ces4_map %>%
+  filter(
+    !is.na(Asthma), 
+    !is.na(Cardiovascular)
+  )
+ggplot(
+  data = bay_asthma_cardio_tract,
+    aes(
+      x = Cardiovascular,
+      y = Asthma
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Asthma and Cardiovascular Disease Prevalence"
+  ) +
+  geom_smooth(method = "lm")
+
+```
+
+
+```{r}
+
+bay_water_pollution_tract <-
+  ces4_map %>%
+  filter(
+    !is.na(Water), 
+    !is.na(Pollution)
+  )
+ggplot(
+  data = bay_water_pollution_tract,
+    aes(
+      x = Pollution,
+      y = Water
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Pollution Burden and Drinking Water Quality"
+  ) +
+  geom_smooth(method = "lm")
+
+```
+
+
+```{r}
+
+bay_pollution_traffic_tract <-
+  ces4_map %>%
+  filter(
+    !is.na(Water), 
+    !is.na(Pollution)
+  )
+ggplot(
+  data = bay_pollution_traffic_tract,
+    aes(
+      x = Traffic,
+      y = Pollution
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Traffic and Pollution Burden"
+  ) +
+  geom_smooth(method = "lm")
+
+```
+
+Finally, I perform a linear regression analysis to further examine the correlation between the three sets of indicators mentioned and plotted above. The regression analyses show that the heavist  correlation between  indicators  examined is between asthma and cardiovascular disease, meaning that regions which have a high prevalence of one of these two indicators likely have a high prevelance of the other. The other two sets  of indicators are shown to have little or no correlation after the linear regression analysis.
+
+```{r}
+
+ggplot(
+  data = bay_asthma_cardio_tract,
+    aes(
+      x = Cardiovascular,
+      y = log(Asthma)
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Asthma and Cardiovascular Disease Prevalence Scatter Plot LOG"
+  ) +
+  geom_smooth(method = "lm")
+
+model_log <- lm(log(Asthma) ~ Cardiovascular, bay_asthma_cardio_tract)
+summary(model_log)
+
+```
+
+```{r}
+
+ggplot(
+  data = bay_water_pollution_tract,
+    aes(
+      x = Pollution,
+      y = log(Water)
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Pollution Burden and Drinking Water Quality Scatter Plot LOG"
+  ) +
+  geom_smooth(method = "lm")
+
+model_log <- lm(log(Water) ~ Pollution, bay_water_pollution_tract)
+summary(model_log)
+
+```
+
+```{r}
+
+ggplot(
+  data = bay_pollution_traffic_tract,
+    aes(
+      x = Traffic,
+      y = log(Pollution)
+    )) +
+  geom_point() +
+  labs(
+    title = "Correlation Between Traffic and Pollution Burden Scatter Plot LOG"
+  ) +
+  geom_smooth(method = "lm")
+
+model_log <- lm(log(Pollution) ~ Traffic, bay_pollution_traffic_tract)
+summary(model_log)
+
+```
+
+All in all, I believe my research demonstrates that there are regions in the bay area which may be especially vulnerable to negative impacts of policies which are best-suited towards socioeconomically privileged regions by showing that there are indicators which are heavily concentrated in some regions within the bay area, and that there are sets of indicators which are likely to exist concurrently. It is important that policymakers pay extra care towards these neighborhoods and communities, especially as the bay becomes less and less accessible to individuals and households of different backgrounds so that no one is left out in the future development of the bay. 
