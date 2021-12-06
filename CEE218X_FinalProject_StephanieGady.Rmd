@@ -5,6 +5,8 @@ date: "11/22/2021"
 output: html_document
 ---
 
+Teaching team: Thank you for taking the time to look through my preliminary submission and provide detailed feedback. Corrected revisions based on teaching team feedback include adding legends to all calenviroscreen maps, and removing log transformations from regression analyses. I'm not able to update my project to match all correction notes given, but hopefully this version will earn a few more points. Thank you for the feedback and for a great quarter!
+
 For my final project, I have chosen to build upon some analysis we started in past assignments in CEE218X. The bay area has some of the biggest inequality disparities in the country, and I think it is important to recognize that not everyone who lives here makes a six-figure tech salary. As development of this region continues and it becomes more and more homogeneous, we must be increasingly mindful of how middle and lower-income individuals and households can easily be left out of key policy decisions. I think that pollution burden, traffic, asthma rates, cardiovascular disease, and  drinking water quality are just a few indicators of overall well-being, something that can vary greatly depending on what resources are available to a household or individual. It’s easy to assume in the bay area that everyone has access to all the resources they need, but in fact the bay is one of the most unequal regions in the country in many ways. In order to demonstrate this in my research, I examine where these indicators exist throughout the bay area and to what degree, and focus on which regions might be especially vulnerable by identifying indicators that are likely to occur concurrently and which regions experience multiple indicators. 
 	My topic was inspired by pod discussions during week 3, in which my pod spent some time talking about the vulnerabilities Stanford allows students to face during extreme heat events, especially students with health conditions or low/middle income students who can’t purchase fans and other cooling supplies. This leaves less socioeconomically privileged students especially at risk, while the university simply sends out emails saying to wear light clothing and close windows when it is hot out or drink warm beverages when it is cold. As a FLI student myself, I often feel the effects of policies which are intentionally best-suited towards high income individuals. I think this project could be impactful, both on campus and in the bay area ass a whole, because I may be able to identify regions which are especially vulnerable to policies that are increasingly best-suited towards class-privileged households. 
 
@@ -221,6 +223,12 @@ leaflet() %>%
     weight = 0.5,
     fillOpacity = 0.5,
     label = "Cardiovascular Diseaase"
+  ) %>% 
+  addLegend(
+    data = ces4_bay_cardio,
+    pal = cardio_pal,
+    values = ~Cardiovascular,
+    title = "Cardiovascular Disease Rate (%)"
   )
 
 ```
@@ -251,6 +259,12 @@ leaflet() %>%
     weight = 0.5,
     fillOpacity = 0.5,
     label = "Asthma Rates"
+  ) %>% 
+  addLegend(
+    data = ces4_bay_asthma,
+    pal = asthma_pal,
+    values = ~Asthma,
+    title = "Asthma Rate (%)"
   )
 ```
 
@@ -279,6 +293,12 @@ leaflet() %>%
     weight = 0.5,
     fillOpacity = 0.5,
     label = "Drinking Water Quality"
+  ) %>% 
+  addLegend(
+    data = ces4_bay_water,
+    pal = water_pal,
+    values = ~Water,
+    title = "Drinking Water Pollution Level"
   )
 ```
 
@@ -300,13 +320,19 @@ traffic_pal <- colorNumeric(
 )
 leaflet() %>% 
   addProviderTiles(providers$CartoDB.Positron) %>% 
-  addPolygond(
+  addPolygons(
     data = ces4_bay_traffic,
     fillColor = ~traffic_pal(Traffic),
     color = "white",
     weight = 0.5,
     fillOpacity = 0.5,
     label = "Traffic"
+  ) %>% 
+  addLegend(
+    data = ces4_bay_traffic,
+    pal = traffic_pal,
+    values = ~Traffic,
+    title = "Traffic Levels (Cars/day)"
   )
 ```
 
@@ -334,7 +360,13 @@ leaflet() %>%
     color = "white",
     weight = 0.5,
     fillOpacity = 0.5,
-    label = "Pollution  Burden"
+    label = "Pollution Burden"
+  ) %>% 
+  addLegend(
+    data = ces4_bay_pollution,
+    pal = pollution_pal,
+    values = ~Pollution,
+    title = "Pollution Burden Score"
   )
 
 ```
@@ -392,8 +424,8 @@ ggplot(
 bay_pollution_traffic_tract <-
   ces4_map %>%
   filter(
-    !is.na(Water), 
-    !is.na(Pollution)
+    !is.na(Pollution), 
+    !is.na(Traffic)
   )
 ggplot(
   data = bay_pollution_traffic_tract,
@@ -425,9 +457,6 @@ ggplot(
   ) +
   geom_smooth(method = "lm")
 
-model_log <- lm(log(Asthma) ~ Cardiovascular, bay_asthma_cardio_tract)
-summary(model_log)
-
 ```
 
 ```{r}
@@ -444,9 +473,6 @@ ggplot(
   ) +
   geom_smooth(method = "lm")
 
-model_log <- lm(log(Water) ~ Pollution, bay_water_pollution_tract)
-summary(model_log)
-
 ```
 
 ```{r}
@@ -462,9 +488,6 @@ ggplot(
     title = "Correlation Between Traffic and Pollution Burden Scatter Plot LOG"
   ) +
   geom_smooth(method = "lm")
-
-model_log <- lm(log(Pollution) ~ Traffic, bay_pollution_traffic_tract)
-summary(model_log)
 
 ```
 
